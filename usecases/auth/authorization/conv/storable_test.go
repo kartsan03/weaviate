@@ -51,3 +51,11 @@ func TestValidateStorableValue(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateStorableCharacters checks that the character check has no length
+// cap, which a permission's resource needs.
+func TestValidateStorableCharacters(t *testing.T) {
+	long := strings.Repeat("a", maxStorableValueLength+1)
+	assert.NoError(t, ValidateStorableCharacters(long))
+	assert.ErrorContains(t, ValidateStorableCharacters(long+","), `','`)
+}

@@ -20,19 +20,24 @@ import (
 	"unicode"
 )
 
-// maxStorableValueLength bounds a user-supplied value in a policy row. It is far
-// above any OIDC subject (at most 255 characters by spec) or group name, and
-// keeps every row well below the line length the policy file loader reads.
-const maxStorableValueLength = 4096
+// maxStorableValueLength caps OIDC user IDs and group names, the only values in a
+// policy row with no limit of their own. 256 fits any OIDC subject (255 by spec)
+// and matches maxTargetLength for user and group patterns in a permission.
+const maxStorableValueLength = 256
 
-// ValidateStorableValue rejects user input that would corrupt the policy file:
-// ',' and '"' are the CSV separator and quote, and '\n' splits the row. It also
-// refuses the other control characters. ValidateStorableRow accepts those, so
-// rows already stored with one, such as a tab, keep restoring.
+// ValidateStorableValue rejects user input longer than maxStorableValueLength or
+// with a character ValidateStorableCharacters refuses.
 func ValidateStorableValue(value string) error {
 	if len(value) > maxStorableValueLength {
 		return fmt.Errorf("must not be longer than %d bytes", maxStorableValueLength)
 	}
+	return ValidateStorableCharacters(value)
+}
+
+// ValidateStorableCharacters rejects ',' and '"', the policy file's field
+// separator and quote, and any control character, such as the '\n' ending a row.
+// ValidateStorableRow accepts a tab, so rows already stored with one still load.
+func ValidateStorableCharacters(value string) error {
 	for _, r := range value {
 		if r == ',' || r == '"' || unicode.IsControl(r) {
 			return fmt.Errorf("must not contain %q", r)
@@ -41,13 +46,9 @@ func ValidateStorableValue(value string) error {
 	return nil
 }
 
-// ValidateStorableRow reports whether a policy row, ptype first, reads back
-// unchanged from the policy file. casbin's file adapter joins the fields with
-// ", " and does not quote them. On load it splits the file on '\n', trims each
-// line and parses it with encoding/csv. A row that does not read back unchanged
-// either fails every later load, so the node can't start, or loads as other
-// rows: a '\n' starts a row of the writer's choosing, and casbin ignores extra
-// fields on a 'g' row rather than rejecting it.
+// ValidateStorableRow reports whether a policy row, ptype first, survives a save
+// and load through casbin's file adapter, which writes fields unquoted. A row
+// that does not can keep the node from starting, or read back as an admin grant.
 func ValidateStorableRow(row ...string) error {
 	line := strings.Join(row, ", ")
 	if strings.Contains(line, "\n") {
