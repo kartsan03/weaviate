@@ -11,7 +11,15 @@
 
 package rbacconf
 
-import "slices"
+import (
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/weaviate/weaviate/usecases/auth/authentication"
+	"github.com/weaviate/weaviate/usecases/auth/authorization"
+	"github.com/weaviate/weaviate/usecases/auth/authorization/conv"
+)
 
 // Config makes every subject on the list an admin, whereas everyone else
 // has no rights whatsoever
@@ -28,6 +36,32 @@ type Config struct {
 // Validate admin list config for viability, can be called from the central
 // config package
 func (c Config) Validate() error {
+	oidcUser := func(s string) string { return conv.UserNameWithTypeFromId(s, authentication.AuthTypeOIDC) }
+	// applyPredefinedRoles writes each non-blank subject to policy.csv, and Init
+	// loads that file before it applies this config again. A row that doesn't
+	// read back unchanged fails that load or loads as a different grant. A user
+	// list's oidc: row is at least as long as its db: row, so it checks both.
+	for _, list := range []struct {
+		name     string
+		subjects []string
+		subject  func(string) string
+		role     string
+	}{
+		{name: "root_users", subjects: c.RootUsers, subject: oidcUser, role: authorization.Root},
+		{name: "admin_users", subjects: c.AdminUsers, subject: oidcUser, role: authorization.Admin},
+		{name: "viewer_users", subjects: c.ViewerUsers, subject: oidcUser, role: authorization.Viewer},
+		{name: "root_groups", subjects: c.RootGroups, subject: conv.PrefixGroupName, role: authorization.Root},
+		{name: "readonly_groups", subjects: c.ReadOnlyGroups, subject: conv.PrefixGroupName, role: authorization.ReadOnly},
+	} {
+		for _, subject := range list.subjects {
+			if strings.TrimSpace(subject) == "" {
+				continue
+			}
+			if err := conv.ValidateStorableRow("g", list.subject(subject), conv.PrefixRoleName(list.role)); err != nil {
+				return fmt.Errorf("%s: %w", list.name, err)
+			}
+		}
+	}
 	return nil
 }
 
